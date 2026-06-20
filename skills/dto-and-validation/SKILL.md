@@ -142,6 +142,126 @@ final class UniqueCustomerEmailValidator extends ConstraintValidator
 }
 ```
 
+## Complex & nested payloads
+
+Real APIs rarely take a flat object. The rules below keep deep/nested JSON validating correctly.
+
+### `#[Assert\Valid]` must repeat at every level
+
+Validation does **not** recurse automatically. Each property that holds a nested DTO (object *or* array of objects) needs its own `#[Assert\Valid]`, all the way down — miss one and the constraints inside that branch silently don't run.
+
+```php
+final class CreateOrderRequest
+{
+    public function __construct(
+        #[Assert\NotBlank, Assert\Email]
+        public readonly string $customerEmail = '',
+
+        #[Assert\Valid]                              // cascade into the address object
+        public readonly ?AddressRequest $shippingAddress = null,
+
+        /** @var OrderLineRequest[] */
+        #[Assert\Valid]                              // cascade into EACH array element
+        #[Assert\Count(min: 1)]
+        public readonly array $items = [],
+    ) {}
+}
+
+final class OrderLineRequest
+{
+    public function __construct(
+        #[Assert\Uuid]
+        public readonly string $productId = '',
+
+        #[Assert\Positive]
+        public readonly int $quantity = 0,
+
+        /** @var DiscountRequest[] */
+        #[Assert\Valid]                              // still required two levels deep
+        public readonly array $discounts = [],
+    ) {}
+}
+```
+
+### Typed nested DTOs deserialize automatically
+
+The Serializer hydrates nested DTOs from the property **type hint** — no manual wiring. Type the property as the DTO (or `DtoType[]` via the `@var` PHPDoc for arrays) and `#[MapRequestPayload]` builds the whole graph.
+
+```php
+// JSON: { "customerEmail": "...", "shippingAddress": { "city": "..." }, "items": [ { ... } ] }
+public function create(#[MapRequestPayload] CreateOrderRequest $request): JsonResponse
+// $request->shippingAddress is an AddressRequest; $request->items is OrderLineRequest[]
+```
+
+For arrays of objects you **must** give the `@var ItemType[]` PHPDoc — the Serializer needs it to know what to hydrate each element into; without it you get an array of `stdClass`/arrays and the nested constraints never fire.
+
+### Polymorphic / discriminated payloads
+
+When a field can be one of several shapes (`{"type": "card", ...}` vs `{"type": "paypal", ...}`), use a `#[DiscriminatorMap]` on an abstract base so the Serializer picks the right concrete DTO.
+
+```php
+#[DiscriminatorMap(typeProperty: 'type', mapping: [
+    'card'   => CardPaymentRequest::class,
+    'paypal' => PaypalPaymentRequest::class,
+])]
+abstract class PaymentRequest {}
+
+final class CardPaymentRequest extends PaymentRequest
+{
+    public function __construct(
+        #[Assert\CardScheme(Assert\CardScheme::VISA)]
+        public readonly string $pan = '',
+    ) {}
+}
+```
+
+### When `#[MapRequestPayload]` isn't enough → a custom ValueResolver
+
+`#[MapRequestPayload]` deserializes one DTO from the body. When you need to build a DTO from **several request parts** (body + route params + headers), apply non-trivial pre-processing, or support a payload shape the Serializer can't express, write a `ValueResolverInterface` instead of decoding in the controller.
+
+```php
+final class CreateOrderRequestResolver implements ValueResolverInterface
+{
+    public function __construct(
+        private readonly SerializerInterface $serializer,
+        private readonly ValidatorInterface $validator,
+    ) {}
+
+    /** @return iterable<CreateOrderRequest> */
+    public function resolve(Request $request, ArgumentMetadata $argument): iterable
+    {
+        if ($argument->getType() !== CreateOrderRequest::class) {
+            return [];
+        }
+
+        $dto = $this->serializer->deserialize($request->getContent(), CreateOrderRequest::class, 'json');
+
+        // Enrich from other request parts the body doesn't carry.
+        $dto = $dto->withTenantId($request->attributes->get('tenantId'));
+
+        $violations = $this->validator->validate($dto);
+        if (\count($violations) > 0) {
+            throw new ValidationFailedException($dto, $violations); // -> 422 via the exception listener
+        }
+
+        yield $dto;
+    }
+}
+```
+
+```php
+// Controller stays thin — the resolver does the work, just like #[MapRequestPayload].
+public function create(CreateOrderRequest $request): JsonResponse { /* ... */ }
+```
+
+Throw `ValidationFailedException` (not an ad-hoc response) so your problem-details listener still produces consistent `422` output. Reserve custom resolvers for cases the attribute genuinely can't handle — don't reimplement `#[MapRequestPayload]`.
+
+### Limit nesting depth on untrusted input
+
+Deeply nested JSON is a denial-of-service vector. Cap depth at the edge (`json_decode($json, depth: 32)` semantics) or via the Serializer's `json_decode_options`/`max_depth` context, and keep payloads shallow by design.
+
+> **OpenAPI / contract-first:** if you generate or hand-maintain an OpenAPI schema, keep the DTO and the schema in lockstep so the documented contract matches what's actually validated. With API Platform the schema is generated **from** the resource/DTO automatically — see the `api-platform-resources` skill.
+
 ## Mapping DTO → entity
 
 Keep mapping out of controllers. Construct the entity through its factory/behavior methods (see `domain-driven-design`), passing scalar values from the DTO. Don't blindly hydrate an entity from request data — that's how mass-assignment bugs happen.
@@ -160,6 +280,12 @@ foreach ($request->items as $line) {
 - Agent decodes JSON and calls `$validator->validate()` by hand in the controller — use `#[MapRequestPayload]`.
 - Agent returns `400` for validation errors with ad-hoc JSON — let the exception listener produce `422` problem+json.
 - Agent forgets `#[Assert\Valid]` on nested DTO arrays — nested constraints won't run without it.
+- Agent adds `#[Assert\Valid]` at the top level but not on deeper nested DTOs — cascade doesn't recurse; repeat it at every level.
+- Agent omits the `@var ItemType[]` PHPDoc on an array property — the Serializer hydrates `stdClass`/arrays and nested validation never fires.
+- Agent hand-writes `if ($data['type'] === 'card')` branching for polymorphic payloads — use `#[DiscriminatorMap]` and concrete DTO subclasses.
+- Agent decodes the body in the controller when the DTO needs data from route/headers too — write a `ValueResolverInterface` instead.
+- Agent's custom resolver returns an ad-hoc error response — throw `ValidationFailedException` so the problem-details listener produces a consistent `422`.
+- Agent leaves nesting depth unbounded on public input — cap decode depth to avoid a DoS vector.
 - Agent writes manual `if (empty(...))` checks in the service for things constraints already cover.
 - Agent hydrates a Doctrine entity directly from request data (mass assignment) — go through the entity's factory/behavior methods.
 - Agent puts validation on the entity instead of the request DTO — entities enforce invariants; DTOs validate input shape.
