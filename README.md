@@ -2,6 +2,8 @@
 
 > Production-ready [Claude Code](https://claude.com/claude-code) skills that teach the agent **your** Symfony conventions — not generic PHP from a 2019 blog post.
 
+**Jump to:** [Quick start](#quick-start) · [Before / After](#before--after) · [Skill catalog](#skill-catalog-16) · [Why](#why) · [Stack assumptions](#stack-assumptions) · [Anatomy of a skill](#anatomy-of-a-skill) · [Contributing](#contributing)
+
 ## Why
 
 AI coding agents are fluent in scripting languages but hallucinate in Symfony. Left alone, an agent will:
@@ -28,21 +30,50 @@ These skills target a modern Symfony stack:
 
 Most patterns apply to Symfony 6.4 LTS too; differences are noted inline.
 
-## Install
+### Tested against
+
+The code in these skills was written and reviewed against these exact versions. Newer patch/minor releases are expected to work; if something breaks on a different version, open an issue.
+
+| Component | Version |
+|---|---|
+| PHP | 8.3 |
+| Symfony | 7.2.x |
+| Doctrine ORM | 3.3 |
+| Doctrine Migrations | 3.8 |
+| API Platform | 4.0 |
+| Symfony Messenger | 7.2 |
+| LexikJWTAuthenticationBundle | 3.x |
+| PHPUnit | 11.x |
+| zenstruck/foundry | 2.x |
+
+### Opinionated by design — and easy to override
+
+These skills ship **sensible defaults**, not the only way. Each `SKILL.md` states *why* it picks a pattern, so when your project differs you can override it: edit the copied skill in your `.claude/skills/` (it's yours now), or add a project-specific note to its **Gotchas**. Common override points — UUID vs. auto-increment IDs, API Platform vs. hand-rolled controllers, Lexik vs. another JWT bundle, Foundry vs. fixture files — are called out in the relevant skill.
+
+## Quick start
 
 ```bash
-# 1. Install Claude Code
+# 1. Install Claude Code (skip if you already have it)
 npm install -g @anthropic-ai/claude-code
 
-# 2. Create the skills directory in your project
+# 2. From the root of YOUR Symfony project, create the skills directory
 mkdir -p .claude/skills
 
-# 3. Copy the skills you want
-cp -r symfony-skills/skills/doctrine-orm .claude/skills/
-cp -r symfony-skills/skills/api-platform-resources .claude/skills/
+# 3. Pull in the skills you want (clone this repo somewhere first)
+git clone https://github.com/fatonh/symfony-skills /tmp/symfony-skills
+cp -r /tmp/symfony-skills/skills/doctrine-orm            .claude/skills/
+cp -r /tmp/symfony-skills/skills/api-platform-resources  .claude/skills/
+cp -r /tmp/symfony-skills/skills/dto-and-validation      .claude/skills/
+
+# ...or install the whole set
+cp -r /tmp/symfony-skills/skills/* .claude/skills/
 ```
 
-Claude Code auto-discovers anything in `.claude/skills/` and loads it when the task matches the skill's `description` trigger.
+Claude Code auto-discovers anything in `.claude/skills/` and loads a skill automatically when your task matches its `description` trigger — no flags, no config.
+
+**Verify it loaded:** inside Claude Code, run `/skills` to list discovered skills, or just ask *"add an orders endpoint"* and watch it pull in `layered-architecture` / `dto-and-validation` before writing code.
+
+> **Commit the skills to your repo.** Putting `.claude/skills/` under version control means every teammate (and every CI agent run) gets the same conventions. That's the point — the skills *are* your team's shared standards.
 
 ## Skill catalog (16)
 
@@ -81,6 +112,58 @@ Claude Code auto-discovers anything in `.claude/skills/` and loads it when the t
 |---|---|
 | [`messenger-async`](skills/messenger-async) | Commands/queries, async transports, handlers, retries |
 | [`testing-pyramid`](skills/testing-pyramid) | Unit / integration / functional tests, factories, the test DB |
+
+## Before / After
+
+The same prompt — *"add a POST endpoint to create an order"* — produces very different code depending on whether the skills are loaded.
+
+### ❌ Without skills
+
+The agent reaches for whatever it's seen most on the internet: fat controller, manual JSON decoding, direct repository access, an entity serialized straight to the client, and `200 OK` for a created resource.
+
+```php
+#[Route('/api/orders', methods: ['POST'])]
+public function create(Request $request, OrderRepository $orders, EntityManagerInterface $em): JsonResponse
+{
+    $data = json_decode($request->getContent(), true);   // manual, unvalidated
+    if (empty($data['items'])) {
+        throw new \RuntimeException('No items');          // domain rule in controller
+    }
+    $order = new Order($data['customerEmail']);
+    $em->persist($order);
+    $em->flush();                                          // transaction in controller
+    return $this->json($order);                            // entity leaks, wrong status
+}
+```
+
+### ✅ With `layered-architecture` + `dto-and-validation` + `rest-controller-conventions`
+
+The agent writes a thin controller: a validated request DTO, one service call, a response DTO, and correct HTTP semantics.
+
+```php
+#[Route('/api/orders', methods: ['POST'])]
+public function create(#[MapRequestPayload] CreateOrderRequest $request): JsonResponse
+{
+    $order = $this->orderService->createOrder($request);  // logic + transaction in service
+
+    return $this->json(
+        OrderResponse::fromEntity($order),                // DTO, not the entity
+        Response::HTTP_CREATED,                            // 201 + Location header
+        ['Location' => $this->generateUrl('order_show', ['id' => $order->getId()])],
+    );
+}
+```
+
+| Concern | Without skills | With skills |
+|---|---|---|
+| Request handling | `json_decode`, unvalidated | `#[MapRequestPayload]` + validated DTO |
+| Business logic | in the controller | in the service |
+| Persistence | `EntityManager` in controller | owned by the service |
+| Response body | raw Doctrine entity | response DTO with serialization groups |
+| Status code | `200 OK` | `201 Created` + `Location` |
+| Errors | `RuntimeException` → 500 | domain exception → RFC 9457 problem+json |
+
+The skills don't make the agent *smarter* — they make it consistent with **your** conventions, every time, without you re-explaining them in each prompt.
 
 ## Anatomy of a skill
 
