@@ -9,6 +9,8 @@ description: >
 
 # Hexagonal Architecture (Ports & Adapters)
 
+> **When to reach for this.** Hexagonal is for complex, long-lived domains where isolating business logic from the framework pays off — rich invariants, multiple delivery mechanisms, logic you expect to outlive the current stack. For typical CRUD and feature work (the ~80% of most apps), use [`layered-architecture`](../layered-architecture) instead; strict ports/adapters there is just overhead. Apply this to the gnarly 20% that earns it, not as a blanket rule.
+
 ## The dependency rule
 
 ```
