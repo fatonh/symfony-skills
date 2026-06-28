@@ -1,0 +1,20 @@
+{
+    "name": "fatonh/symfony-skills",
+    "description": "Claude Code / Agent Skills teaching modern Symfony 7 conventions (Doctrine ORM 3, API Platform 4, DTOs, security, testing). Installable as a Symfony AI Mate extension.",
+    "type": "symfony-ai-mate",
+    "license": "MIT",
+    "keywords": ["symfony", "claude-code", "agent-skills", "ai-mate", "doctrine", "conventions"],
+    "authors": [
+        {
+            "name": "Faton Haliti"
+        }
+    ],
+    "require": {
+        "php": ">=8.3"
+    },
+    "extra": {
+        "ai-mate": {
+            "skills": ["skills"]
+        }
+    }
+}
