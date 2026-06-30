@@ -2,7 +2,7 @@
 
 > Production-ready [Claude Code](https://claude.com/claude-code) skills that teach the agent **your** Symfony conventions — not generic PHP from a 2019 blog post.
 
-**Jump to:** [Quick start](#quick-start) · [Before / After](#before--after) · [Skill catalog](#skill-catalog-16) · [Why](#why) · [Stack assumptions](#stack-assumptions) · [Anatomy of a skill](#anatomy-of-a-skill) · [Contributing](#contributing)
+**Jump to:** [Quick start](#quick-start) · [Before / After](#before--after) · [Skill catalog](#skill-catalog-17) · [Why](#why) · [Stack assumptions](#stack-assumptions) · [Anatomy of a skill](#anatomy-of-a-skill) · [Contributing](#contributing)
 
 ## Why
 
@@ -75,7 +75,7 @@ Claude Code auto-discovers anything in `.claude/skills/` and loads a skill autom
 
 > **Commit the skills to your repo.** Putting `.claude/skills/` under version control means every teammate (and every CI agent run) gets the same conventions. That's the point — the skills *are* your team's shared standards.
 
-## Skill catalog (16)
+## Skill catalog (17)
 
 ### Architecture
 | Skill | Use when |
@@ -112,6 +112,11 @@ Claude Code auto-discovers anything in `.claude/skills/` and loads a skill autom
 |---|---|
 | [`messenger-async`](skills/messenger-async) | Commands/queries, async transports, handlers, retries |
 | [`testing-pyramid`](skills/testing-pyramid) | Unit / integration / functional tests, factories, the test DB |
+
+### Console / CLI
+| Skill | Use when |
+|---|---|
+| [`console-commands`](skills/console-commands) | `#[AsCommand]` commands, method-level commands on a service class (8.1+), typed CLI inputs via value resolvers / `#[MapInput]` DTOs |
 
 ## Before / After
 
